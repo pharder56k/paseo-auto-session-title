@@ -1,7 +1,7 @@
 {
   "name": "auto-session-title",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Automatically rename Paseo sessions after idle, using multi-turn conversation content and a customizable title prompt.",
   "repository": {
     "type": "git",
