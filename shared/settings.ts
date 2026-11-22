@@ -51,6 +51,9 @@ export type NamingSettingsValues = z.infer<typeof namingSettings.schema>;
 /** 手动/自动触发：扫描已有会话并安排空闲改名 */
 export const scanRpc = defineRpc({
   name: "naming.scan",
-  input: z.object({}),
+  input: z.object({
+    force: z.boolean().optional(),
+    agentIds: z.array(z.string()).optional(),
+  }),
   output: z.object({ scanned: z.number(), scheduled: z.number() }),
 });

@@ -78,6 +78,7 @@ export default function contribute(server: PluginServerContext) {
     paseo: PaseoLike,
     fallbackTitle: string | null,
     fallbackCwd: string | null,
+    force = false,
   ): Promise<void> {
     timers.delete(agentId);
     if (running.has(agentId)) return;
@@ -100,41 +101,40 @@ export default function contribute(server: PluginServerContext) {
         snapshot = (refreshed?.agent ?? null) as unknown as AgentSnapshotLike | null;
       }
       if (!snapshot) return;
-      if (snapshot.archivedAt || snapshot.background || snapshot.activeTurn) return;
+      if (snapshot.archivedAt || snapshot.background) return;
+      if (!force && snapshot.activeTurn) return;
 
       const currentTitle = snapshot.title ?? fallbackTitle ?? null;
       const entries = page.entries ?? [];
       const firstUserText = extractFirstUserText(entries);
       const derived = deriveInitialAgentTitle(firstUserText);
 
-      // 用户手改检测：优先级高于 turnId 去重
-      if (state.lastPluginTitle) {
-        if (currentTitle !== state.lastPluginTitle) {
+      // 用户手改检测：优先级高于 turnId 去重；显式 force 扫描时跳过，避免误判后再次锁定
+      if (!force) {
+        if (state.lastPluginTitle) {
+          if (currentTitle !== state.lastPluginTitle) {
+            updateAgentState(agentId, { locked: true, lockReason: "user_renamed" });
+            console.log(`[${PLUGIN_ID}] 检测到用户手改，永久锁定 agent=${agentId}`);
+            return;
+          }
+        } else if (state.provisionalTitle !== null) {
+          if (currentTitle !== state.provisionalTitle) {
+            updateAgentState(agentId, {
+              locked: true,
+              lockReason: "user_renamed_before_first_summary",
+            });
+            console.log(`[${PLUGIN_ID}] 首次定稿前检测到用户手改，永久锁定 agent=${agentId}`);
+            return;
+          }
+        } else if (currentTitle && derived && currentTitle !== derived) {
           updateAgentState(agentId, {
             locked: true,
-            lockReason: "user_renamed",
+            lockReason: "custom_initial_title",
+            provisionalTitle: currentTitle,
           });
-          console.log(`[${PLUGIN_ID}] 检测到用户手改，永久锁定 agent=${agentId}`);
+          console.log(`[${PLUGIN_ID}] 检测到自定义初始标题，永久锁定 agent=${agentId}`);
           return;
         }
-      } else if (state.provisionalTitle !== null) {
-        if (currentTitle !== state.provisionalTitle) {
-          updateAgentState(agentId, {
-            locked: true,
-            lockReason: "user_renamed_before_first_summary",
-          });
-          console.log(`[${PLUGIN_ID}] 首次定稿前检测到用户手改，永久锁定 agent=${agentId}`);
-          return;
-        }
-      } else if (currentTitle && derived && currentTitle !== derived) {
-        // 首次观察：当前标题既不是首行推导值，说明是显式自定义标题
-        updateAgentState(agentId, {
-          locked: true,
-          lockReason: "custom_initial_title",
-          provisionalTitle: currentTitle,
-        });
-        console.log(`[${PLUGIN_ID}] 检测到自定义初始标题，永久锁定 agent=${agentId}`);
-        return;
       }
 
       const values = await readSettings(settings);
@@ -204,26 +204,38 @@ export default function contribute(server: PluginServerContext) {
     }
   }
 
-  server.handle(scanRpc, async (_input, context) => {
+  server.handle(scanRpc, async (input, context) => {
     const listed = await context.paseo.agents.list();
-    const entries = listed.entries ?? [];
+    const allEntries = listed.entries ?? [];
+    const ids = input.agentIds?.length ? new Set(input.agentIds) : null;
+    const entries = ids ? allEntries.filter((entry) => ids.has(entry.agent.id)) : allEntries;
+    const force = input.force === true || ids !== null;
     let scheduled = 0;
     for (const entry of entries) {
       const agent = entry.agent;
       if (agent.archivedAt || agent.background) continue;
       const state = getAgentState(agent.id);
-      if (state.locked) continue;
+      if (state.locked && !force) continue;
+      if (force) {
+        updateAgentState(agent.id, {
+          locked: false,
+          lockReason: null,
+          provisionalTitle: null,
+          lastPluginTitle: null,
+          lastSummarizedTurnId: null,
+        });
+      }
       const id = agent.id;
       const title = agent.title ?? null;
       const cwd = agent.cwd ?? null;
       const timer = setTimeout(() => {
-        void runIdle(id, `startup:${id}`, context.paseo, title, cwd);
+        void runIdle(id, `forced:${id}`, context.paseo, title, cwd, force);
       }, 800 + scheduled * 300);
       timers.set(id, timer);
       scheduled += 1;
     }
-    console.log(`[${PLUGIN_ID}] 扫描已有会话：共 ${entries.length}，安排 ${scheduled}`);
-    return { scanned: entries.length, scheduled };
+    console.log(`[${PLUGIN_ID}] 扫描已有会话：共 ${allEntries.length}，选中 ${entries.length}，安排 ${scheduled}`);
+    return { scanned: allEntries.length, scheduled };
   });
 
   const offBefore = server.addHook("agent.turn.before", async ({ agent }) => {
