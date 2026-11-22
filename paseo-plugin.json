@@ -7,6 +7,6 @@
     "assets/settings-full.png"
   ],
   "requirements": {
-    "paseo": ">=0.17.1"
+    "paseo": ">=0.15.0"
   }
 }
