@@ -5,10 +5,10 @@ import type {
 import { IDLE_MS, PLUGIN_ID } from "./server/config";
 import {
   extractContext,
-  extractFirstUserText,
+  fetchConversationEntries,
   forbiddenNames,
   type AgentSnapshotLike,
-  type TimelinePayloadLike,
+  type TimelineHandleLike,
 } from "./server/context-extract";
 import { createdAtToMMDD, deriveInitialAgentTitle } from "./server/date-mmdd";
 import { renameAgent } from "./server/renamer";
@@ -63,6 +63,7 @@ export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(namingSettings);
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const running = new Set<string>();
+  const explicitInitialTitles = new Set<string>();
 
   function cancel(agentId: string): void {
     const timer = timers.get(agentId);
@@ -89,13 +90,11 @@ export default function contribute(server: PluginServerContext) {
       if (state.locked) return;
 
       const handle = paseo.agents.ref(agentId);
-      const page = (await handle.timeline.refetch({
-        direction: "tail",
-        limit: 30,
-        wholeTurns: true,
-      })) as unknown as TimelinePayloadLike;
+      const { entries, firstUserText, agent: pageAgent } = await fetchConversationEntries(
+        handle.timeline as unknown as TimelineHandleLike,
+      );
 
-      let snapshot = page.agent as AgentSnapshotLike | null | undefined;
+      let snapshot = pageAgent;
       if (!snapshot) {
         const refreshed = await handle.refresh();
         snapshot = (refreshed?.agent ?? null) as unknown as AgentSnapshotLike | null;
@@ -105,11 +104,13 @@ export default function contribute(server: PluginServerContext) {
       if (!force && snapshot.activeTurn) return;
 
       const currentTitle = snapshot.title ?? fallbackTitle ?? null;
-      const entries = page.entries ?? [];
-      const firstUserText = extractFirstUserText(entries);
       const derived = deriveInitialAgentTitle(firstUserText);
 
-      // 用户手改检测：优先级高于 turnId 去重；显式 force 扫描时跳过，避免误判后再次锁定
+      // 用户手改检测：
+      // 1) 插件已经写入过 lastPluginTitle，之后标题被改成了别的值 -> 用户手改，锁定
+      // 2) 插件已记录过 provisionalTitle（刚开第一轮时的标题），在插件首次改名前被改成了别的值 -> 用户手改，锁定
+      // 注意：不再在“首次观察到某老会话”时仅仅因为 currentTitle !== derived 就锁死！
+      // 因为长会话翻页、或其它首轮改名插件（如 better-paseo）都会让初始标题不等于 derived，那属于误锁。
       if (!force) {
         if (state.lastPluginTitle) {
           if (currentTitle !== state.lastPluginTitle) {
@@ -126,14 +127,6 @@ export default function contribute(server: PluginServerContext) {
             console.log(`[${PLUGIN_ID}] 首次定稿前检测到用户手改，永久锁定 agent=${agentId}`);
             return;
           }
-        } else if (currentTitle && derived && currentTitle !== derived) {
-          updateAgentState(agentId, {
-            locked: true,
-            lockReason: "custom_initial_title",
-            provisionalTitle: currentTitle,
-          });
-          console.log(`[${PLUGIN_ID}] 检测到自定义初始标题，永久锁定 agent=${agentId}`);
-          return;
         }
       }
 
@@ -146,7 +139,7 @@ export default function contribute(server: PluginServerContext) {
         return;
       }
 
-      const provisional = state.provisionalTitle ?? derived ?? currentTitle;
+      const provisional = state.provisionalTitle ?? currentTitle ?? derived;
       if (!state.provisionalTitle) {
         state = updateAgentState(agentId, { provisionalTitle: provisional });
       }
@@ -238,8 +231,61 @@ export default function contribute(server: PluginServerContext) {
     return { scanned: allEntries.length, scheduled };
   });
 
+  const offCreate = server.addHook("agent.create.before", async ({ request }) => {
+    // 只有用户/调用方在创建会话时显式传入了 config.title，才标记为自定义初始标题。
+    // 这里还拿不到 agentId，所以通过临时集合记录该显式标题，在 create.after 中绑定到 agentId。
+    const explicit =
+      typeof request.config.title === "string" && request.config.title.trim().length > 0
+        ? request.config.title.trim()
+        : null;
+    if (explicit) {
+      explicitInitialTitles.add(explicit);
+    }
+    return undefined;
+  });
+
+  const offCreated = server.addHook("agent.create.after", async ({ agent }) => {
+    if (agent.background) return;
+    const title = typeof agent.title === "string" ? agent.title.trim() : "";
+    if (title && explicitInitialTitles.has(title)) {
+      explicitInitialTitles.delete(title);
+      updateAgentState(agent.id, {
+        locked: true,
+        lockReason: "explicit_create_title",
+        provisionalTitle: title,
+      });
+      console.log(`[${PLUGIN_ID}] 创建时显式指定了标题，永久锁定 agent=${agent.id}`);
+    }
+  });
+
   const offBefore = server.addHook("agent.turn.before", async ({ agent }) => {
     cancel(agent.id);
+    if (agent.background) return;
+    const state = getAgentState(agent.id);
+    if (state.locked) return;
+    const currentTitle = agent.title ?? null;
+    // 在新一轮开始时就校验：如果之前插件写过标题（或记录过初始标题），而现在变了，说明用户在两轮之间手动改了名
+    if (state.lastPluginTitle && currentTitle && currentTitle !== state.lastPluginTitle) {
+      updateAgentState(agent.id, { locked: true, lockReason: "user_renamed" });
+      console.log(`[${PLUGIN_ID}] 新一轮开始前检测到用户手改，永久锁定 agent=${agent.id}`);
+      return;
+    }
+    if (
+      !state.lastPluginTitle &&
+      state.provisionalTitle !== null &&
+      currentTitle &&
+      currentTitle !== state.provisionalTitle
+    ) {
+      updateAgentState(agent.id, {
+        locked: true,
+        lockReason: "user_renamed_before_first_summary",
+      });
+      console.log(`[${PLUGIN_ID}] 首次定稿前检测到用户手改，永久锁定 agent=${agent.id}`);
+      return;
+    }
+    if (state.provisionalTitle === null && currentTitle) {
+      updateAgentState(agent.id, { provisionalTitle: currentTitle });
+    }
   });
 
   const offAfter = server.addHook(
@@ -267,6 +313,8 @@ export default function contribute(server: PluginServerContext) {
   });
 
   return () => {
+    offCreate();
+    offCreated();
     offBefore();
     offAfter();
     offArchive();

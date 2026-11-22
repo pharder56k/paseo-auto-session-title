@@ -126,13 +126,21 @@ function NamingSettingsScreen() {
 
       <SettingsSection
         title="已有会话"
-        info="扫描当前主机上尚未锁定的历史会话并安排改名；用户手改过的会话会自动跳过。"
+        info="扫描当前主机上尚未锁定的历史会话并安排改名；若此前某些会话被误锁，可用“解锁并重命名”强制对所有会话重新总结。"
       >
         <SettingsAction
           label="历史会话批量改名"
           actionLabel="立即扫描"
           onPress={() => void scan({}).then((result) => {
             toast.show(`已扫描 ${result.scanned} 个会话，安排 ${result.scheduled} 个`);
+          })}
+        />
+        <SettingsAction
+          label="解锁全部并重新命名"
+          hint="清除所有会话的手改锁定标记，按最新多轮对话内容重新总结一次"
+          actionLabel="强制重命名"
+          onPress={() => void scan({ force: true }).then((result) => {
+            toast.show(`已解锁并安排 ${result.scheduled}/${result.scanned} 个会话重新命名`);
           })}
         />
       </SettingsSection>

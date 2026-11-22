@@ -28,7 +28,7 @@ const summarizerMod = await import(new URL("summarizer.ts", serverDir).href);
 const settingsMod = await import(new URL("../shared/settings.ts", import.meta.url).href);
 
 const { createdAtToMMDD, deriveInitialAgentTitle } = dateMod;
-const { extractFirstUserText, extractContext, forbiddenNames } = contextMod;
+const { extractFirstUserText, extractContext, fetchConversationEntries, forbiddenNames } = contextMod;
 const { __parseDecisionForTest } = summarizerMod;
 const { DEFAULT_PROMPT, namingSettings } = settingsMod;
 
@@ -298,6 +298,69 @@ check(
     defaults.fixedModel === "" &&
     defaults.customPrompt === DEFAULT_PROMPT,
   JSON.stringify({ ...defaults, customPrompt: defaults.customPrompt.slice(0, 30) }),
+);
+
+// --- fetchConversationEntries 分页读取（修复长会话误锁与 tool_call 淹没） ---
+
+const fullTimeline = [
+  { seqStart: 1, item: { type: "user_message", text: "真正的第一条用户消息FIRST_PROMPT" } },
+  { seqStart: 2, item: { type: "assistant_message", text: "第一轮回复" } },
+  ...Array.from({ length: 40 }, (_, i) => ({
+    seqStart: 3 + i,
+    item: { type: "tool_call", name: "bash", detail: { type: "shell", command: "ls" } },
+  })),
+  { seqStart: 50, item: { type: "user_message", text: "中间用户消息MIDDLE_USER" } },
+  { seqStart: 51, item: { type: "assistant_message", text: "中间助手回复" } },
+  ...Array.from({ length: 30 }, (_, i) => ({
+    seqStart: 60 + i,
+    item: { type: "tool_call", name: "read", detail: { type: "unknown" } },
+  })),
+  { seqStart: 100, item: { type: "user_message", text: "最后一轮最新主题LATEST_TOPIC" } },
+  { seqStart: 101, item: { type: "assistant_message", text: "最后一轮结论LATEST_ANSWER" } },
+];
+
+const mockTimelineHandle = {
+  async refetch(opts = {}) {
+    const dir = opts.direction ?? "tail";
+    if (dir === "after") {
+      const slice = fullTimeline.slice(0, 6);
+      return {
+        entries: slice,
+        hasNewer: true,
+        endCursor: { epoch: "e1", seq: 6 },
+        agent: { title: "真正的第一条用户消息FIRST_PROMPT", createdAt: "2026-11-22T02:00:00.000Z" },
+      };
+    }
+    if (dir === "tail") {
+      // 模拟末尾一页：包含最后问答 + 大量 tool_call，且不包含第 1 条消息
+      return {
+        entries: fullTimeline.slice(-20),
+        hasOlder: true,
+        startCursor: { epoch: "e1", seq: 60 },
+        agent: { title: "真正的第一条用户消息FIRST_PROMPT", createdAt: "2026-11-22T02:00:00.000Z" },
+      };
+    }
+    return {
+      entries: fullTimeline.slice(10, 35),
+      hasOlder: false,
+      startCursor: { epoch: "e1", seq: 10 },
+    };
+  },
+};
+
+const paged = await fetchConversationEntries(mockTimelineHandle);
+eq(
+  "fetchConversationEntries finds real first user message from head page",
+  paged.firstUserText,
+  "真正的第一条用户消息FIRST_PROMPT",
+);
+const pagedCtx = extractContext(paged.entries, "旧标题", "1122");
+check(
+  "fetchConversationEntries merges head first prompt and tail latest turn",
+  pagedCtx.includes("真正的第一条用户消息FIRST_PROMPT") &&
+    pagedCtx.includes("最后一轮最新主题LATEST_TOPIC") &&
+    pagedCtx.includes("最后一轮结论LATEST_ANSWER"),
+  pagedCtx,
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);
