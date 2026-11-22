@@ -22,10 +22,11 @@ Paseo 插件：在会话连续空闲后，根据多轮对话内容自动重新�
 paseo plugin install github:pharder56k/paseo-auto-session-title
 ```
 
-私有仓库需要在目标设备上先登录 GitHub CLI：
+私有仓库需要在 daemon 所在机器上先登录 GitHub CLI，并配置 git credential helper：
 
 ```bash
 gh auth login
+gh auth setup-git
 ```
 
 也可以先克隆仓库再本地安装：
