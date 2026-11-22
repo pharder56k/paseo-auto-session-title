@@ -2,7 +2,8 @@
   "id": "auto-session-title",
   "name": "Auto Session Title",
   "description": "空闲后按 MMDD｜类型｜主题 自动重命名会话；用户手改后永久停止",
-  "media": [],
+  "icon": "assets/icon.png",
+  "media": ["assets/screenshot.png", "assets/sidebar.png"],
   "requirements": {
     "paseo": ">=0.17.1"
   }

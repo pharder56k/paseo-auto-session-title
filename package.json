@@ -10,6 +10,7 @@
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
+    "assets/",
     "OVERVIEW.*.md",
     "index.client.ts",
     "index.client.tsx",
