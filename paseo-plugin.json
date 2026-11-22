@@ -1,7 +1,13 @@
 {
   "id": "auto-session-title",
   "name": "Auto Session Title",
-  "description": "空闲后按 MMDD｜类型｜主题 自动重命名会话；用户手改后永久停止",
+  "description": "Renames idle Paseo sessions from their conversations using the local Pi CLI.",
+  "translations": {
+    "zh-CN": {
+      "name": "自动会话标题",
+      "description": "空闲后按 MMDD｜类型｜主题 自动重命名会话；用户手改后永久停止"
+    }
+  },
   "media": [
     "assets/screenshot.png",
     "assets/settings-full.png"

@@ -1,5 +1,5 @@
-import { execFile } from "node:child_process";
 import { PASEO_BIN, PLUGIN_ID, RENAME_TIMEOUT_MS } from "./config";
+import { startCommand } from "./binaries";
 
 /**
  * 只改对话标题：paseo agent update <id> --name <title>
@@ -7,22 +7,48 @@ import { PASEO_BIN, PLUGIN_ID, RENAME_TIMEOUT_MS } from "./config";
  */
 export async function renameAgent(agentId: string, title: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    execFile(
-      PASEO_BIN,
-      ["agent", "update", agentId, "--name", title],
-      { timeout: RENAME_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) {
-          console.error(
-            `[${PLUGIN_ID}] 改名失败 agent=${agentId}: ${error.message}; stderr=${String(stderr ?? "").slice(0, 300)}`,
-          );
-          resolve(false);
-          return;
-        }
+    let settled = false;
+    let stdout = "";
+    let stderr = "";
+
+    const finish = (ok: boolean, reason?: string): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (ok) {
         console.log(`[${PLUGIN_ID}] 已改名 agent=${agentId} -> ${title}`);
-        void stdout;
-        resolve(true);
-      },
-    );
+      } else {
+        console.error(
+          `[${PLUGIN_ID}] 改名失败 agent=${agentId}: ${reason ?? ""} ${stderr.slice(0, 300)}`.trim(),
+        );
+      }
+      resolve(ok);
+    };
+
+    // spawn instead of execFile: a child that keeps stdio open must not hang the
+    // rename step, and the 10s timeout must always settle the promise.
+    const child = startCommand(PASEO_BIN, ["agent", "update", agentId, "--name", title]);
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(false, `timeout ${RENAME_TIMEOUT_MS}ms`);
+    }, RENAME_TIMEOUT_MS);
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => finish(false, error.message));
+    child.on("close", (code, signal) => {
+      if (code !== 0) {
+        finish(false, `exit code=${code} signal=${signal}`);
+        return;
+      }
+      void stdout;
+      finish(true);
+    });
   });
 }

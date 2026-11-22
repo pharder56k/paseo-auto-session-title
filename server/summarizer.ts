@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { startCommand } from "./binaries";
 import {
   PI_BIN,
   PI_TIMEOUT_MS,
@@ -129,7 +129,7 @@ export async function summarizeTitle(input: {
     };
 
     // execFile 在当前环境会让 pi 的子进程一直占用 stdio 导致假死；spawn 正常。
-    const child = spawn(PI_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = startCommand(PI_BIN, args);
 
     timer = setTimeout(() => {
       child.kill("SIGKILL");

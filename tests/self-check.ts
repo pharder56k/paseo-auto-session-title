@@ -4,6 +4,7 @@
 //   node --experimental-strip-types tests/self-check.ts
 // @ts-nocheck
 
+import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 
 function needsTypeScriptExtension(specifier: string): boolean {
@@ -22,11 +23,13 @@ registerHooks({
 });
 
 const serverDir = new URL("../server/", import.meta.url);
+const binariesMod = await import(new URL("binaries.ts", serverDir).href);
 const dateMod = await import(new URL("date-mmdd.ts", serverDir).href);
 const contextMod = await import(new URL("context-extract.ts", serverDir).href);
 const summarizerMod = await import(new URL("summarizer.ts", serverDir).href);
 const settingsMod = await import(new URL("../shared/settings.ts", import.meta.url).href);
 
+const { resolveExecutable } = binariesMod;
 const { createdAtToMMDD, deriveInitialAgentTitle } = dateMod;
 const { extractFirstUserText, extractContext, fetchConversationEntries, forbiddenNames } = contextMod;
 const { __parseDecisionForTest } = summarizerMod;
@@ -298,6 +301,102 @@ check(
     defaults.fixedModel === "" &&
     defaults.customPrompt === DEFAULT_PROMPT,
   JSON.stringify({ ...defaults, customPrompt: defaults.customPrompt.slice(0, 30) }),
+);
+
+// --- portable CLI lookup ---
+
+const installedFiles = new Set([
+  "/usr/local/bin/pi",
+  "/opt/homebrew/bin/paseo",
+  "/Users/test/.pi/agent/bin/pi",
+  "/Users/test/.local/bin/paseo",
+  "C:\\Tools\\paseo.exe",
+]);
+const fakeIsFile = (candidate: string) => installedFiles.has(candidate);
+
+eq(
+  "pi resolves from the daemon PATH on macOS",
+  resolveExecutable({
+    name: "pi",
+    pathValue: "/usr/bin:/usr/local/bin",
+    home: "/Users/test",
+    platform: "darwin",
+    isFile: fakeIsFile,
+  }),
+  "/usr/local/bin/pi",
+);
+eq(
+  "paseo resolves from the daemon PATH on Linux",
+  resolveExecutable({
+    name: "paseo",
+    pathValue: "/usr/bin:/opt/homebrew/bin",
+    home: "/home/test",
+    platform: "linux",
+    isFile: fakeIsFile,
+  }),
+  "/opt/homebrew/bin/paseo",
+);
+eq(
+  "explicit env override wins over PATH",
+  resolveExecutable({
+    name: "pi",
+    envValue: "/opt/custom/pi",
+    pathValue: "/usr/local/bin",
+    home: "/Users/test",
+    platform: "darwin",
+    isFile: fakeIsFile,
+  }),
+  "/opt/custom/pi",
+);
+eq(
+  "managed Pi install is a fallback when PATH has no pi",
+  resolveExecutable({
+    name: "pi",
+    pathValue: "/usr/bin",
+    home: "/Users/test",
+    platform: "darwin",
+    isFile: fakeIsFile,
+  }),
+  "/Users/test/.pi/agent/bin/pi",
+);
+eq(
+  "npm-global paseo is a fallback on Linux",
+  resolveExecutable({
+    name: "paseo",
+    pathValue: "/usr/bin",
+    home: "/home/test",
+    platform: "linux",
+    isFile: (candidate) => candidate === "/home/test/.npm-global/bin/paseo",
+  }),
+  "/home/test/.npm-global/bin/paseo",
+);
+eq(
+  "Windows PATH uses semicolons and finds .exe",
+  resolveExecutable({
+    name: "paseo",
+    pathValue: "C:\\Windows;C:\\Tools",
+    home: "C:\\Users\\test",
+    platform: "win32",
+    isFile: fakeIsFile,
+  }),
+  "C:\\Tools\\paseo.exe",
+);
+eq(
+  "missing binary falls back to the bare command name",
+  resolveExecutable({
+    name: "pi",
+    pathValue: "/usr/bin",
+    home: "/Users/test",
+    platform: "darwin",
+    isFile: () => false,
+  }),
+  "pi",
+);
+
+const configSource = readFileSync(new URL("../server/config.ts", import.meta.url), "utf8");
+check(
+  "config.ts has no single-user absolute paths",
+  !configSource.includes("/home/harder") && !configSource.includes("/Users/harder"),
 );
 
 // --- fetchConversationEntries 分页读取（修复长会话误锁与 tool_call 淹没） ---

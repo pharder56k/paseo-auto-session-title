@@ -14,7 +14,9 @@ Paseo 插件：在会话连续空闲后，根据多轮对话内容自动重新�
 
 ## 安装
 
-需要 Paseo >= 0.15.0，且设备上已安装并登录 `pi` CLI（插件用它做标题提炼）。
+需要 Paseo >= 0.15.0，且 daemon 所在机器上已安装并登录 `pi` CLI（插件用它做标题提炼）。
+
+插件默认从 daemon 的 `PATH` 查找 `pi` 和 `paseo`，macOS / Linux / Windows 都适用；找不到时会检查常见的用户目录与系统目录（例如 `~/.local/bin/pi`、`~/.pi/agent/bin/pi`、`~/.npm-global/bin/paseo`）。如果命令装在其它位置，可在 daemon 环境中设置 `PASEO_AUTO_TITLE_PI_BIN` / `PASEO_AUTO_TITLE_PASEO_BIN` 指向可执行文件；修改环境变量后需要重启 daemon。插件日志开头的 `外部命令 pi=... paseo=...` 会显示实际使用的路径。
 
 从本仓库安装：
 

@@ -2,7 +2,7 @@ import type {
   PluginHookContext,
   PluginServerContext,
 } from "@getpaseo/plugin/server";
-import { IDLE_MS, PLUGIN_ID } from "./server/config";
+import { IDLE_MS, PASEO_BIN, PI_BIN, PLUGIN_ID } from "./server/config";
 import {
   extractContext,
   fetchConversationEntries,
@@ -60,6 +60,7 @@ async function syncWorkspaceTitle(
 }
 
 export default function contribute(server: PluginServerContext) {
+  console.log(`[${PLUGIN_ID}] 外部命令 pi=${PI_BIN} paseo=${PASEO_BIN}`);
   const settings = server.registerSettings(namingSettings);
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const running = new Set<string>();
@@ -90,6 +91,8 @@ export default function contribute(server: PluginServerContext) {
       if (state.locked) return;
 
       const handle = paseo.agents.ref(agentId);
+      // SAFETY: the SDK timeline exposes refetch with the same shape used by
+      // fetchConversationEntries; the cast only narrows its structural type.
       const { entries, firstUserText, agent: pageAgent } = await fetchConversationEntries(
         handle.timeline as unknown as TimelineHandleLike,
       );
@@ -97,6 +100,8 @@ export default function contribute(server: PluginServerContext) {
       let snapshot = pageAgent;
       if (!snapshot) {
         const refreshed = await handle.refresh();
+        // SAFETY: a refreshed agent and AgentSnapshotLike share the fields read
+        // here (title, cwd, createdAt, workspaceId, model and activity flags).
         snapshot = (refreshed?.agent ?? null) as unknown as AgentSnapshotLike | null;
       }
       if (!snapshot) return;

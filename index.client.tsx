@@ -16,6 +16,16 @@ import {
   type NamingSettingsValues,
 } from "./shared/settings";
 
+// React Native style objects; keeping this out of JSX makes the multiline
+// prompt field easier to adjust without re-rendering the settings tree.
+const promptInputStyle = {
+  minHeight: 220,
+  padding: 12,
+  borderWidth: 1,
+  borderRadius: 8,
+  textAlignVertical: "top",
+} as const;
+
 function NamingSettingsScreen() {
   const settings = useSettings(namingSettings);
   const toast = useToast();
@@ -114,13 +124,7 @@ function NamingSettingsScreen() {
           value={draft.customPrompt}
           onChangeText={(text) => patch({ customPrompt: text })}
           placeholder="输入自定义提示词"
-          style={{
-            minHeight: 220,
-            padding: 12,
-            borderWidth: 1,
-            borderRadius: 8,
-            textAlignVertical: "top",
-          }}
+          style={promptInputStyle}
         />
       </SettingsSection>
 

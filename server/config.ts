@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { resolveExecutable } from "./binaries";
 
 export const PLUGIN_ID = "auto-session-title";
 
@@ -33,11 +34,26 @@ export const STATE_PATH = path.join(
   "state.json",
 );
 
-/** 绝对路径，避免 plugin 子进程继承不到 daemon 的 PATH */
-export const PASEO_BIN =
-  process.env.PASEO_AUTO_TITLE_PASEO_BIN ?? "/home/harder/.npm-global/bin/paseo";
-export const PI_BIN =
-  process.env.PASEO_AUTO_TITLE_PI_BIN ?? "/home/harder/.local/bin/pi";
+/**
+ * 优先使用 daemon 的 PATH，避免写死某个账号的 home 目录。
+ * 需要指定其它位置时可用 PASEO_AUTO_TITLE_PI_BIN / PASEO_AUTO_TITLE_PASEO_BIN 覆盖。
+ */
+const binaryLookup = {
+  pathValue: process.env.PATH,
+  home: process.env.HOME ?? process.env.USERPROFILE,
+};
+
+export const PASEO_BIN = resolveExecutable({
+  name: "paseo",
+  envValue: process.env.PASEO_AUTO_TITLE_PASEO_BIN,
+  ...binaryLookup,
+});
+
+export const PI_BIN = resolveExecutable({
+  name: "pi",
+  envValue: process.env.PASEO_AUTO_TITLE_PI_BIN,
+  ...binaryLookup,
+});
 
 /** 主题长度限制 */
 export const TOPIC_MIN_HAN = 4;
